@@ -57,9 +57,7 @@ const fetchSolana = async (options: FetchOptions) => {
     for (const [mint, amount] of order.inputs) dailyOutgoingVolume.add(solanaToken(mint), amount);
     dailyOutgoingTxCount++;
   }
-  // status Delivered: orders with an output filled in the window. destinationChainId matches the first output only, and the
-  // API does not say which output was filled or for how much, so each Solana output counts its signed amount; only
-  // Dutch-auction outputs (context types 0x01 and 0xe1) fill a different amount.
+  // status Delivered: orders with an output filled in the window; each Solana output counts its signed amount
   for (const order of await windowOrders(options, { destinationChainId: SOLANA_CHAIN_ID, status: "Delivered" })) {
     if (order.originChainId === SOLANA_CHAIN_ID) continue;
     for (const output of order.outputs) {
@@ -80,8 +78,13 @@ const fetch = async (options: FetchOptions) => {
   const priced = (address: string) => isTron && !/^0x0{40}$/.test(address) ? evmToTronAddress(address) : address;
   const dailyOutgoingVolume = options.createBalances();
   const dailyIncomingVolume = options.createBalances();
-  const opened: OpenLog[] = await options.getLogs({ target: settlers.input, eventAbi: OPEN });
-  const filled: OutputFilledLog[] = await options.getLogs({ target: settlers.output, eventAbi: OUTPUT_FILLED });
+  // the runner has no block lookup for Injective, so its EVM log range comes from the coins API, one block past the previous window
+  const range = options.chain === CHAIN.INJECTIVE ? {
+    fromBlock: (await httpGet(`https://coins.llama.fi/block/${CHAIN.INJECTIVE}/${options.fromTimestamp - 1}`)).height + 1,
+    toBlock: (await httpGet(`https://coins.llama.fi/block/${CHAIN.INJECTIVE}/${options.toTimestamp}`)).height,
+  } : {};
+  const opened: OpenLog[] = await options.getLogs({ target: settlers.input, eventAbi: OPEN, ...range });
+  const filled: OutputFilledLog[] = await options.getLogs({ target: settlers.output, eventAbi: OUTPUT_FILLED, ...range });
 
   let dailyOutgoingTxCount = 0;
   let dailyIncomingTxCount = 0;
@@ -104,14 +107,17 @@ const fetch = async (options: FetchOptions) => {
   return { dailyOutgoingVolume, dailyIncomingVolume, dailyOutgoingTxCount, dailyIncomingTxCount };
 };
 
-// First day each chain had an Intent on the settlers above, which every EVM chain uses since 2026-08-06 and Tron since
-// 2026-09-09. The API also lists Intents on older settlers, so Solana starts with the EVM chains.
+// First day each chain had an Intent on the settlers above (every EVM chain since 2026-08-06, Tron since 2026-09-09), or the
+// day the settlers were deployed on a chain without one yet. Soneium has no settlers yet and starts with the EVM chains, as
+// does Solana, because the API also lists Intents on older settlers.
 const START: Record<string, string> = {
   [CHAIN.ETHEREUM]: "2026-08-06", [CHAIN.BASE]: "2026-08-06", [CHAIN.OPTIMISM]: "2026-08-06", [CHAIN.ARBITRUM]: "2026-08-06",
   [CHAIN.POLYGON]: "2026-08-06", [CHAIN.BSC]: "2026-08-06", [CHAIN.ROBINHOOD]: "2026-08-06", [CHAIN.PHAROS]: "2026-08-06",
-  [CHAIN.STABLE]: "2026-08-12", [CHAIN.MONAD]: "2026-08-18", [CHAIN.AVAX]: "2026-08-24", [CHAIN.UNICHAIN]: "2026-08-24",
-  [CHAIN.HYPERLIQUID]: "2026-08-24", [CHAIN.PLASMA]: "2026-09-01", [CHAIN.TRON]: "2026-09-09", [CHAIN.ARC]: "2026-09-10",
-  [CHAIN.WC]: "2026-09-11", [CHAIN.INK]: "2026-09-12", [CHAIN.ELYSIUM]: "2026-11-05", [CHAIN.SOLANA]: "2026-08-06",
+  [CHAIN.XDAI]: "2026-07-30", [CHAIN.KATANA]: "2026-07-30", [CHAIN.STABLE]: "2026-08-12", [CHAIN.CELO]: "2026-08-17",
+  [CHAIN.MANTLE]: "2026-08-17", [CHAIN.MONAD]: "2026-08-18", [CHAIN.AVAX]: "2026-08-24", [CHAIN.UNICHAIN]: "2026-08-24",
+  [CHAIN.HYPERLIQUID]: "2026-08-24", [CHAIN.INJECTIVE]: "2026-08-28", [CHAIN.PLASMA]: "2026-09-01", [CHAIN.TEMPO]: "2026-09-03",
+  [CHAIN.TRON]: "2026-09-09", [CHAIN.ARC]: "2026-09-10", [CHAIN.WC]: "2026-09-11", [CHAIN.INK]: "2026-09-12",
+  [CHAIN.ELYSIUM]: "2026-11-05", [CHAIN.XLAYER]: "2026-11-11", [CHAIN.SONEIUM]: "2026-08-06", [CHAIN.SOLANA]: "2026-08-06",
 };
 
 const adapter: SimpleAdapter = {
